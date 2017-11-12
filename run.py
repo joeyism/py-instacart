@@ -20,79 +20,84 @@ def getAllMemory():
     del dic, key, val
     return dict(mem_dict)
 
+def groupByAgg(df, groupby_val, agg_dict):
+    stats = df.groupby(groupby_val).agg(agg_dict)
+    stats.columns = stats.columns.droplevel(0)
+    return stats
+
+
 rint = p(rint)
 
 d = pandabase.readFiles("data/")
-d["priors_order_details"] = DataSet(d["orders"].merge(right=d["order_products__prior"], on="order_id"))
-d["priors_order_details"].loc[:, "_user_buy_product_times"] = d["priors_order_details"].groupby(["user_id", "product_id"]).cumcount() + 1
-agg_dict = {'user_id':{'_prod_tot_cnts':'count'},
-           'reordered':{'_prod_reorder_tot_cnts':'sum'},
-           '_user_buy_product_times': {'_prod_buy_first_time_total_cnt':lambda x: sum(x==1),
-                                       '_prod_buy_second_time_total_cnt':lambda x: sum(x==2)}}
-df_new = d["priors_order_details"]
-grouped = df_new.groupby(["product_id"])
-the_stats = grouped.agg(agg_dict)
-the_stats.columns = the_stats.columns.droplevel(0)
+d["orders_details__prior"] = DataSet(d["orders"].merge(right=d["order_products__prior"], on="order_id"))
+d["orders_details__prior"].loc[:, "no_of_times_user_bought_item"] = d["orders_details__prior"].groupby(["user_id", "product_id"]).cumcount() + 1
 
-the_stats['_prod_reorder_prob'] = the_stats["_prod_buy_second_time_total_cnt"] / the_stats["_prod_buy_first_time_total_cnt"]
-the_stats['_prod_reorder_ratio'] = the_stats["_prod_reorder_tot_cnts"] / the_stats["_prod_tot_cnts"]
-the_stats['_prod_reorder_times'] = 1 + the_stats["_prod_reorder_tot_cnts"] / the_stats["_prod_buy_first_time_total_cnt"]
-the_stats = the_stats.reset_index()
-
-#######
-rint = p(rint)
-agg_dict_2 = {'order_number':{'_user_total_orders':'max'},
-              'days_since_prior_order':{'_user_sum_days_since_prior_order':'sum',
-                                        '_user_mean_days_since_prior_order': 'mean'}}
-
-the_stats2 = d["orders"][d["orders"].eval_set == "prior"].groupby(["user_id"]).agg(agg_dict_2)
-the_stats2.columns = the_stats2.columns.droplevel(0)
-the_stats2 = DataSet(the_stats2)
 
 
 #######
 rint = p(rint)
-agg_dict_3 = {'reordered':
-              {'_user_reorder_ratio':
-               lambda x: sum(d["priors_order_details"].ix[x.index,'reordered']==1)/sum(d["priors_order_details"].ix[x.index,'order_number'] > 1)},
-              'product_id':{'_user_total_products':'count',
-                            '_user_distinct_products': lambda x: x.nunique()}}
-
-the_stats3 = d["priors_order_details"].groupby(["user_id"]).agg(agg_dict_3)
-the_stats3.columns = the_stats3.columns.droplevel(0)
-the_stats3 = DataSet(the_stats3)
+orders_prior_dict = {'order_number':{'total_orders':'max'},
+              'days_since_prior_order':{'total_days_between_orders':'sum',
+                                        'avg_days_between_orders': 'mean'}}
+orders_prior_agg = groupByAgg(d["orders"][d["orders"]["eval_set"] == "prior"], ["user_id"], orders_prior_dict)
 
 
-users = DataSet(the_stats2.merge(the_stats3, how="inner", left_index=True, right_index=True))
+#######
+rint = p(rint)
+orders_details_prior_dict = {'reordered':
+              {'reorder_ratio':
+               lambda x: sum(d["orders_details__prior"].ix[x.index,'reordered']==1)/sum(d["orders_details__prior"].ix[x.index,'order_number'] > 1)},
+              'product_id':{'total_products':'count',
+                            'distinct_products': lambda x: x.nunique()}}
+orders_details_prior_agg = groupByAgg(d["orders_details__prior"], ["user_id"], orders_details_prior_dict)
 
-users["_user_average_basket"] = users["_user_total_products"]/users["_user_total_orders"]
+
+users_agg = orders_prior_agg.merge(orders_details_prior_agg, how="inner", left_index=True, right_index=True)
+
+users_agg["average_no_item_per_order"] = users_agg["total_products"]/users_agg["total_orders"]
 
 us = d["orders"].loc[d["orders"]["eval_set"] != "prior", ["user_id", "order_id", "eval_set", "days_since_prior_order"]]
 us.rename(index=str, columns={"days_since_prior_order": "time_since_last_order"}, inplace=True)
-users = users.merge(us, how="inner", left_index=True, right_on="user_id")
+users_agg = users_agg.merge(us, how="inner", left_index=True, right_on="user_id")
+
+del us, orders_prior_agg, orders_details_prior_agg
+gc.collect()
 
 #######
 rint = p(rint)
-agg_dict_4 = {'order_number':{'_up_order_count': 'count',
-                              '_up_first_order_number': 'min',
-                              '_up_last_order_number':'max'},
-              'add_to_cart_order':{'_up_average_cart_position': 'mean'}}
-the_stats4 = d["priors_order_details"].groupby(["user_id", "product_id"]).agg(agg_dict_4)
-the_stats4.columns = the_stats4.columns.droplevel(0)
-the_stats4 = DataSet(the_stats4)
+
+agg_dict = {'user_id':{'no_purchased':'count'},
+           'reordered':{'no_reordered':'sum'},
+           'no_of_times_user_bought_item': {'no_bought_first_time':lambda x: sum(x==1),
+                                       'no_bought_second_time':lambda x: sum(x==2)}}
+product_agg_prior = groupByAgg(d["orders_details__prior"], ["product_id"], agg_dict)
+
+product_agg_prior['reorder_prob'] = product_agg_prior["no_bought_second_time"] / product_agg_prior["no_bought_first_time"]
+product_agg_prior['reorder_ratio'] = product_agg_prior["no_reordered"] / product_agg_prior["no_purchased"]
+product_agg_prior['no_times_reordered'] = 1 + product_agg_prior["no_reordered"] / product_agg_prior["no_bought_first_time"]
+product_agg_prior = product_agg_prior.reset_index()
+
+
+rint = p(rint)
+user_product_prior_dict = {'order_number':{'no_of_orders': 'count',
+                              'order_number_of_first_purchase': 'min',
+                              'order_number_of_last_purchase':'max'},
+              'add_to_cart_order':{'average_order_number': 'mean'}}
+user_product_prior_agg = d["orders_details__prior"].groupby(["user_id", "product_id"]).agg(user_product_prior_dict)
+user_product_prior_agg.columns = user_product_prior_agg.columns.droplevel(0)
 
 
 
-the_stats4 = the_stats4.reset_index()
+user_product_prior_agg = user_product_prior_agg.reset_index()
 
-data = the_stats4.merge(the_stats, how="inner", on="product_id").merge(users, how="inner", on="user_id")
+data = user_product_prior_agg.merge(product_agg_prior, how="inner", on="product_id").merge(users_agg, how="inner", on="user_id")
 
-del the_stats, the_stats2, the_stats3, the_stats4, df_new, grouped
+del product_agg_prior, user_product_prior_agg, df_new, grouped
 gc.collect()
 #######
-data['_up_order_rate'] = data._up_order_count / data._user_total_orders
-data['_up_order_since_last_order'] = data._user_total_orders - data._up_last_order_number
-data['_up_order_rate_since_first_order'] = data._up_order_count / (data._user_total_orders - data._up_first_order_number + 1)
+data['_up_order_rate'] = data.no_of_orders / data.total_orders
+data['_up_order_since_last_order'] = data.total_orders - data.order_number_of_last_purchase
+data['_up_order_rate_since_first_order'] = data.no_of_orders / (data.total_orders - data.order_number_of_first_purchase + 1)
 
 
 #######
