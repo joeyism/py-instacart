@@ -49,7 +49,8 @@ orders_details_prior_dict = {'reordered':
                lambda x: sum(d["orders_details__prior"].ix[x.index,'reordered']==1)/sum(d["orders_details__prior"].ix[x.index,'order_number'] > 1)},
               'product_id':{'total_products':'count',
                             'distinct_products': lambda x: x.nunique()}}
-orders_details_prior_agg = groupByAgg(d["orders_details__prior"], ["user_id"], orders_details_prior_dict)
+orders_details_prior_agg = d["orders_details__prior"].groupby(["user_id"]).agg(orders_details_prior_dict)
+orders_details_prior_agg.columns = orders_details_prior_agg.columns.droplevel(0)
 
 
 users_agg = orders_prior_agg.merge(orders_details_prior_agg, how="inner", left_index=True, right_index=True)
@@ -83,8 +84,8 @@ user_product_prior_dict = {'order_number':{'no_of_orders': 'count',
                               'order_number_of_first_purchase': 'min',
                               'order_number_of_last_purchase':'max'},
               'add_to_cart_order':{'average_order_number': 'mean'}}
-user_product_prior_agg = d["orders_details__prior"].groupby(["user_id", "product_id"]).agg(user_product_prior_dict)
-user_product_prior_agg.columns = user_product_prior_agg.columns.droplevel(0)
+
+user_product_prior_agg = groupByAgg(d["orders_details__prior"], ["user_id", "product_id"], user_product_prior_dict)
 
 
 
@@ -92,12 +93,15 @@ user_product_prior_agg = user_product_prior_agg.reset_index()
 
 data = user_product_prior_agg.merge(product_agg_prior, how="inner", on="product_id").merge(users_agg, how="inner", on="user_id")
 
-del product_agg_prior, user_product_prior_agg, df_new, grouped
+del product_agg_prior, user_product_prior_agg
 gc.collect()
+
+
+
 #######
-data['_up_order_rate'] = data.no_of_orders / data.total_orders
-data['_up_order_since_last_order'] = data.total_orders - data.order_number_of_last_purchase
-data['_up_order_rate_since_first_order'] = data.no_of_orders / (data.total_orders - data.order_number_of_first_purchase + 1)
+data["order_rate"] = data["no_of_orders"] / data["total_orders"]
+data["no_of_orders_since_last_purchase"] = data["total_orders"] - data["order_number_of_last_purchase"]
+data["no_of_orders_since_first_purchase"] = data["no_of_orders"] / (data["total_orders"] - data["order_number_of_first_purchase"] + 1)
 
 
 #######
@@ -113,8 +117,8 @@ total_buy_n5.columns = ["user_id", "product_id", "total_buy_n5"]
 rint = p(rint)
 train = d["order_products__train"]
 train = train.merge(right=d["orders"][["order_id", "user_id"]], how = "left", on ="order_id")
-#train = train.merge(right=total_buy_n5, how="left", on=["user_id", "product_id"]) #
 data = data.merge(train[["user_id", "product_id", "reordered"]], on = ["user_id", "product_id"], how="left")
+
 
 
 del d
@@ -170,7 +174,6 @@ combine_name = [[grouped_name] + [method_name] + [target_name] for method_name i
 
 df_new = X_test[X_test["reordered"] == 1].copy() # get only ones where calculated to be reordered
 the_stats5 = df_new.groupby(agg_dict_5["group_columns_list"]).agg(agg_dict_5["methods_list"]).reset_index()
-the_stats5.columns = the_stats5.columns.droplevel(1)
 the_stats5 = the_stats5.drop("eval_set", axis=1)
 the_stats5.columns = sample_submission.columns
 
