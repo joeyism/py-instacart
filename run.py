@@ -1,6 +1,7 @@
 import gc
 import pandabase
 import pandas as pd
+import sys
 from pandabase import DataSet
 from time import gmtime, strftime
 import numpy as np
@@ -29,7 +30,7 @@ def groupByAgg(df, groupby_val, agg_dict):
 rint = p(rint)
 
 d = pandabase.readFiles("data/")
-d["orders_details__prior"] = DataSet(d["orders"].merge(right=d["order_products__prior"], on="order_id"))
+d["orders_details__prior"] = d["orders"].merge(right=d["order_products__prior"], on="order_id")
 d["orders_details__prior"].loc[:, "no_of_times_user_bought_item"] = d["orders_details__prior"].groupby(["user_id", "product_id"]).cumcount() + 1
 
 
@@ -75,7 +76,7 @@ product_agg_prior = groupByAgg(d["orders_details__prior"], ["product_id"], agg_d
 
 product_agg_prior['reorder_prob'] = product_agg_prior["no_bought_second_time"] / product_agg_prior["no_bought_first_time"]
 product_agg_prior['reorder_ratio'] = product_agg_prior["no_reordered"] / product_agg_prior["no_purchased"]
-product_agg_prior['no_times_reordered'] = 1 + product_agg_prior["no_reordered"] / product_agg_prior["no_bought_first_time"]
+product_agg_prior['avg_no_times_ordered'] = 1 + product_agg_prior["no_reordered"] / product_agg_prior["no_bought_first_time"]
 product_agg_prior = product_agg_prior.reset_index()
 
 
@@ -83,7 +84,7 @@ rint = p(rint)
 user_product_prior_dict = {'order_number':{'no_of_orders': 'count',
                               'order_number_of_first_purchase': 'min',
                               'order_number_of_last_purchase':'max'},
-              'add_to_cart_order':{'average_order_number': 'mean'}}
+              'add_to_cart_order':{'avg_cart_order_number': 'mean'}}
 
 user_product_prior_agg = groupByAgg(d["orders_details__prior"], ["user_id", "product_id"], user_product_prior_dict)
 
@@ -101,7 +102,7 @@ gc.collect()
 #######
 data["order_rate"] = data["no_of_orders"] / data["total_orders"]
 data["no_of_orders_since_last_purchase"] = data["total_orders"] - data["order_number_of_last_purchase"]
-data["no_of_orders_since_first_purchase"] = data["no_of_orders"] / (data["total_orders"] - data["order_number_of_first_purchase"] + 1)
+data["order_rate_since_first_purchase"] = data["no_of_orders"] / (data["total_orders"] - data["order_number_of_first_purchase"] + 1)
 
 
 #######
