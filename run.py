@@ -27,26 +27,24 @@ def groupByAgg(df, groupby_val, agg_dict):
     return stats
 
 
-rint = p(rint)
 
+######## Get Data and Feature Engineering ########
+#
 d = pandabase.readFiles("data/")
 d["orders_details__prior"] = d["orders"].merge(right=d["order_products__prior"], on="order_id")
 d["orders_details__prior"].loc[:, "no_of_times_user_bought_item"] = d["orders_details__prior"].groupby(["user_id", "product_id"]).cumcount() + 1
 
 
-
-#######
-rint = p(rint)
 orders_prior_dict = {'order_number':{'total_orders':'max'},
               'days_since_prior_order':{'total_days_between_orders':'sum',
                                         'avg_days_between_orders': 'mean'}}
 orders_prior_agg = groupByAgg(d["orders"][d["orders"]["eval_set"] == "prior"], ["user_id"], orders_prior_dict)
 
+#
+# User-based features
 
-#######
-rint = p(rint)
 orders_details_prior_dict = {'reordered':
-              {'reorder_ratio':
+              {'reorder_ratio_user':
                lambda x: sum(d["orders_details__prior"].ix[x.index,'reordered']==1)/sum(d["orders_details__prior"].ix[x.index,'order_number'] > 1)},
               'product_id':{'total_products':'count',
                             'distinct_products': lambda x: x.nunique()}}
@@ -65,8 +63,10 @@ users_agg = users_agg.merge(us, how="inner", left_index=True, right_on="user_id"
 del us, orders_prior_agg, orders_details_prior_agg
 gc.collect()
 
-#######
-rint = p(rint)
+
+#
+# Product-based features
+
 
 agg_dict = {'user_id':{'no_purchased':'count'},
            'reordered':{'no_reordered':'sum'},
@@ -75,12 +75,11 @@ agg_dict = {'user_id':{'no_purchased':'count'},
 product_agg_prior = groupByAgg(d["orders_details__prior"], ["product_id"], agg_dict)
 
 product_agg_prior['reorder_prob'] = product_agg_prior["no_bought_second_time"] / product_agg_prior["no_bought_first_time"]
-product_agg_prior['reorder_ratio'] = product_agg_prior["no_reordered"] / product_agg_prior["no_purchased"]
+product_agg_prior['reorder_ratio_prod'] = product_agg_prior["no_reordered"] / product_agg_prior["no_purchased"]
 product_agg_prior['avg_no_times_ordered'] = 1 + product_agg_prior["no_reordered"] / product_agg_prior["no_bought_first_time"]
 product_agg_prior = product_agg_prior.reset_index()
 
 
-rint = p(rint)
 user_product_prior_dict = {'order_number':{'no_of_orders': 'count',
                               'order_number_of_first_purchase': 'min',
                               'order_number_of_last_purchase':'max'},
@@ -92,21 +91,26 @@ user_product_prior_agg = groupByAgg(d["orders_details__prior"], ["user_id", "pro
 
 user_product_prior_agg = user_product_prior_agg.reset_index()
 
+
+#
+# Combining Both
+
 data = user_product_prior_agg.merge(product_agg_prior, how="inner", on="product_id").merge(users_agg, how="inner", on="user_id")
 
 del product_agg_prior, user_product_prior_agg
 gc.collect()
 
 
+#
+# User and Product based features
 
-#######
 data["order_rate"] = data["no_of_orders"] / data["total_orders"]
 data["no_of_orders_since_last_purchase"] = data["total_orders"] - data["order_number_of_last_purchase"]
 data["order_rate_since_first_purchase"] = data["no_of_orders"] / (data["total_orders"] - data["order_number_of_first_purchase"] + 1)
 
 
-#######
-rint = p(rint)
+### Possible new features ###
+
 t = d["orders"].merge(d["order_products__prior"], on="order_id")
 t["order_number_rev"] = t.groupby("user_id")["order_number"].transform(np.max) - t["order_number"] + 1
 
@@ -114,19 +118,23 @@ t["total_cart_size"] = t.groupby(["user_id", "order_id"])["add_to_cart_order"].t
 total_buy_n5 = t[(t["order_number_rev"] > 0) & (t["order_number_rev"] <= 5)].groupby(["user_id", "product_id"]).size().reset_index()
 total_buy_n5.columns = ["user_id", "product_id", "total_buy_n5"]
 
-#######
-rint = p(rint)
+
+
+#
+# Adding new features in
+
 train = d["order_products__train"]
 train = train.merge(right=d["orders"][["order_id", "user_id"]], how = "left", on ="order_id")
 data = data.merge(train[["user_id", "product_id", "reordered"]], on = ["user_id", "product_id"], how="left")
 
-
-
 del d
 gc.collect()
 
-#######
-rint = p(rint)
+
+######### MODELING ###########
+#
+#
+# TRAIN
 import xgboost
 from sklearn.model_selection import train_test_split
 #%matplotlib tk
@@ -158,26 +166,26 @@ bst = xgboost.train(params=xgb_params, dtrain=d_train, num_boost_round=100, eval
 
 gc.collect()
 
-
-#######
+#
+# TEST
 sample_submission = pd.read_csv("data/sample_submission.csv")
 d_test = xgboost.DMatrix(X_test.drop(["eval_set", "user_id", "order_id", "reordered", "product_id"], axis=1))
-X_test.loc[:, "reordered"] = (bst.predict(d_test) > 0.21).astype(int)
+X_test.loc[:, "reordered"] = (bst.predict(d_test) > 0.22).astype(int)
 X_test.loc[:, "product_id"] = X_test["product_id"].astype(str)
-agg_dict_5 = {
+submission_dict = {
     "group_columns_list": ["order_id"],
     "target_columns_list": ["product_id"],
     "methods_list": [lambda x: " ".join(set(x))]
 }
 grouped_name = "order_id"
 target_name = "product_id"
-combine_name = [[grouped_name] + [method_name] + [target_name] for method_name in agg_dict_5["methods_list"]]
+combine_name = [[grouped_name] + [method_name] + [target_name] for method_name in submission_dict["methods_list"]]
 
 df_new = X_test[X_test["reordered"] == 1].copy() # get only ones where calculated to be reordered
-the_stats5 = df_new.groupby(agg_dict_5["group_columns_list"]).agg(agg_dict_5["methods_list"]).reset_index()
-the_stats5 = the_stats5.drop("eval_set", axis=1)
-the_stats5.columns = sample_submission.columns
+submission_df = df_new.groupby(submission_dict["group_columns_list"]).agg(submission_dict["methods_list"]).reset_index()
+submission_df = submission_df.drop("eval_set", axis=1)
+submission_df.columns = sample_submission.columns
 
-submit_final = sample_submission[['order_id']].merge(the_stats5, how='left').fillna('None')
+submit_final = sample_submission[['order_id']].merge(submission_df, how='left').fillna('None')
 time = strftime("%Y-%m-%d-%H-%M-%S", gmtime())
 submit_final.to_csv("submission-" + time + ".csv", index=False)

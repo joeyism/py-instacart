@@ -1,5 +1,8 @@
 \documentclass[12pt]{article}
 \usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{float}
+
 \begin{document}
 
 \title{Instacart Model}
@@ -44,7 +47,7 @@ Before any new columns are created, a new DataFrame called \texttt{orders\_detai
 \newline
 A new feature called \texttt{no\_of\_times\_user\_bought\_item} is created in \texttt{orders\_details\_\_prior} that counts the total number of times a user has ordered that specific item.
 
-\subsubsection{User-based Features}
+\subsubsection{User-based Features} \label{user_features}
 The following is a list of each feature generated based on user behaviour, with a description of the meaning of each feature to each user. A SQL interpretation of this is $GROUP\ BY\ user\_id$.
 \newline
 \newline
@@ -63,9 +66,9 @@ Sums up the number of days between orders, to get a number representing the tota
 Takes the mean of number of days between orders, to understand on average how long it takes for each user to make a new order
 \newline
 \newline
-{\textbf{reorder\_ratio}}
+{\textbf{reorder\_ratio\_user}}
 \newline
-For each user, the \texttt{reorder\_ratio} is calculated with
+For each user, the \texttt{reorder\_ratio\_user} is calculated with
 \begin{equation}
     \begin{split}
     &\frac{number\ of\ reorders\ in\ orders}{number\ of\ products\ ordered\ that's\ not\ in\ the\ first\ order} \\ \\
@@ -96,7 +99,7 @@ which calculates the average number of items in the cart when the user orders
 \newline
 \newline
 
-\subsubsection{Product-based Features}
+\subsubsection{Product-based Features} \label{product_features}
 The following is a list of each feature generated based on products, with a description of the meaning of each feature to each product. A SQL interpretation of this is $GROUP\ BY\ product\_id$.
 \newline\newline
 {\textbf{no\_purchased}}
@@ -129,7 +132,7 @@ This describes the probability that the product will be reordered for a second p
     \end{split}
 \end{equation}
 \newline\newline
-{\textbf{reorder\_ratio}}
+{\textbf{reorder\_ratio\_prod}}
 \newline
 This is the ratio of how many reorders for each item, compared to number of orders. This is calculated by 
 This describes the probability that the product will be reordered for a second purchase after a user has bought it the first time. This is calculated by
@@ -158,7 +161,7 @@ This is the average number of times an item is ordered. This is calculated by
     \end{split}
 \end{equation}
 
-\subsubsection{User-based and Product-based Features}
+\subsubsection{User-based and Product-based Features} \label{user_product_features}
 The following is a list of each feature generated based on both users and products, with a description of the meaning of each feature to each user and each product. A SQL interpretation of this is $GROUP\ BY\ user\_id, product\_id$.
 \newline\newline
 {\textbf{no\_of\_orders}}
@@ -206,11 +209,45 @@ Due to the nature of the data, XGBoost was selected to be used to train and gene
 Before training occurs, the data has to be split up. By merging the various dataframes, there exists one dataframe with all relevant information and features that was described in section \ref{feature_engineering}. This dataframe also inherited the \texttt{eval\_set} column from \texttt{orders} file that only has two values: \textit{train} and \textit{test}. From hereon, training data refers to the dataset with $eval\_set = train$ and testing data refers to the dataset with $eval\_set = test$.
 
 \subsubsection{Training}
+The idea for training this model is the same as training any other model. Given $x, y$, there exist a process to continuous update $A$ such that $y = Ax$, where $x$ is the input and $y$ is the output. In this scenario, the output is the \texttt{reordered} column, where it has a binary result of $0$ or $1$. The training input data should only contain relevant columns as to eliminate noise and not confuse the learning method. Therefore, columns such as \texttt{eval\_set}, \texttt{user\_id}, \texttt{product\_id}, and \texttt{order\_id} are dropped since their values do not directly contribute to the binary result of \texttt{reordered}.
+\newline\newline
+At this point, there are two dataframes: \texttt{X\_train} for training data $x$, and \texttt{y\_train} for training \texttt{reordered} data $y$. These two dataframes are fed into the XGBoost training object, with different hyperparameters. Selection of hyperparameters is sometimes more of an art than a science, and can be time consuming since each epoch takes quite a bit of time. The most important part is to know the objective is "reg:logistic" as this is a classification problem. It is common to use logloss as an evaluation metric, as rmse and mae can incurr L1 and L2 errors.
+
+\begin{figure}[H]
+    \includegraphics[width=\linewidth]{feature_importance.png}
+    \caption{XGBoost Training Feature Importance}
+    \label{fig:feat_imp}
+\end{figure}
+
+After training, it is often beneficial to view which features contribute to the training model the most, especially when there is an increasing number of features. Figure (\ref{fig:feat_imp}) above shows a graph comparing the features described above, ordered from highest attribution to the model to the least.
 
 \subsubsection{Predicting}
+Similar to creating a dataframe for training, the test input data has to drop irrelevant columns. This include columns such as \texttt{eval\_set}, \texttt{user\_id}, \texttt{product\_id}, \texttt{reordered}, and \texttt{order\_id}. \texttt{reordered} is dropped in the testing dataframe because this is the desired output, and should not be a part of the input. The resulting dataframe can be input into the XGBoost trained model.
+\newline\newline
+From the testing data, all predicted score above 0.21 are considered to be reordered, and below is not. The results are aggregated and appended to the \texttt{sample\_submission} file. The dataframe is aggregated in such a way that for every \texttt{order\_id}, \texttt{products} column has the \texttt{product\_id} where \texttt{reordered} was calculated to be 1. For example, the dataframe would be of the form
+
+\begin{center}
+\begin{tabular}{ c l }
+ order\_id & products \\ 
+ \hline
+ 17 & 13107 21463 \\  
+ 34 & 47792
+\end{tabular}
+\end{center}
 
 \section{Result}
+While there is some variability in the submissions, the submission score is \textbf{0.3812513}.
 
-\section{Future Work}
+\section{Future Improvements}
+There are two major ways to improve the model. The first is to create new features, and the second is to tune the hyperparameters. There are a lot of literature out there that describes how better to tune hyperparameters, so it will not be discussed here. Creation of new features would be an interesting task, and the feature importance plot can be used to determine how well various engineered features fare. One of these possible features could be one that integrates recency, such that if products were heavily ordered in orders 1-5, but not ordered in orders 6-9, then it can help determine such a product would be less likely to be reordered. 
+
+
+\begin{figure}[H]
+    \includegraphics[width=\linewidth]{future_model.png}
+    \caption{Future Model Design}
+    \label{fig:future_model}
+\end{figure}
+
+As described above, the features are divided into user-based (see Section \ref{user_features}) and product-based (see Section \ref{product_features}). A possible next step could be to divide up the features into two separate dataframes, each fed into its own model, and combine the results. Then there would be a user-specific model, and a product-specific model, and both would merge into a user-product-model with user-product features (see Section \ref{user_product_features}). An example of that can be seen in the figure \ref{fig:future_model} above.
 
 \end{document}
